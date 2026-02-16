@@ -11,11 +11,10 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.GuildMember]
 });
 
-// --- CONFIGURAÇÃO DE IDS ---
+// CONFIGURAÇÃO
 const CONFIG = {
     GUILD_ID: "1472997422786674842",
-    CANAL_PAINEL: "1472997423197454468", // Onde o usuário vê o /painel
-    CANAL_LOGS_STAFF: "1472997423789113409", // Onde a Staff aceita/recusa
+    CANAL_LOGS_STAFF: "1472997423789113409", 
     CARGOS: {
         "1": { id: "1472997422786674844", nome: "Ajudante" },
         "2": { id: "1472997422786674845", nome: "Moderador(a)" },
@@ -23,143 +22,102 @@ const CONFIG = {
     }
 };
 
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ Banco de Dados Horizonte RP Conectado!"))
-    .catch(err => console.error("❌ Erro MongoDB:", err));
+// Conexão MongoDB
+mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ MongoDB Conectado")).catch(e => console.error("❌ Erro DB:", e));
 
-client.on('ready', async () => {
-    console.log(`🤖 Bot ${client.user.tag} Online!`);
+client.on('ready', () => {
+    console.log(`🤖 Bot Online como ${client.user.tag}`);
     const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
-    if (guild) {
-        await guild.commands.set([{ name: 'painel', description: 'Envia o painel de registro' }]);
-    }
+    if(guild) guild.commands.set([{ name: 'painel', description: 'Envia o painel' }]);
 });
 
 client.on('interactionCreate', async (interaction) => {
     try {
-        // --- 1. COMANDO /PAINEL (Visual Idêntico à Imagem) ---
-        if (interaction.commandName === 'painel') {
+        // COMANDO /PAINEL
+        if (interaction.isChatInputCommand() && interaction.commandName === 'painel') {
             const embed = new EmbedBuilder()
                 .setColor(0x5865F2)
                 .setTitle('📋 SISTEMA DE REGISTRO')
-                .setDescription(
-                    'Bem-vindo ao sistema de registro do servidor!\n\n' +
-                    'Para que tudo funcione corretamente, **selecione e utilize apenas o cargo correspondente ao seu setor atual.**\n\n' +
-                    '⚠️ **Usar cargo incorreto pode causar:**\n' +
-                    '• Erros no registro\n' +
-                    '• Problemas de permissão\n' +
-                    '• Penalidades administrativas\n\n' +
-                    '✅ Em caso de dúvida, procure um responsável do seu setor.'
-                );
-
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('btn_reg').setLabel('Registrar-se').setEmoji('📋').setStyle(ButtonStyle.Primary)
-            );
-
+                .setDescription('Bem-vindo ao sistema de registro!\n\nUtilize o botão abaixo para iniciar.');
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('reg_btn').setLabel('Registrar-se').setEmoji('📋').setStyle(ButtonStyle.Primary));
             return await interaction.reply({ embeds: [embed], components: [row] });
         }
 
-        // --- 2. MODAL (NOVO FORMULÁRIO) ---
-        if (interaction.isButton() && interaction.customId === 'btn_reg') {
-            const modal = new ModalBuilder().setCustomId('md_reg').setTitle('Registro de Membro');
-
-            const nIn = new TextInputBuilder()
-                .setCustomId('f_nick').setLabel('NICK').setPlaceholder('Nome do seu personagem na cidade').setStyle(TextInputStyle.Short).setRequired(true);
-
-            const cIn = new TextInputBuilder()
-                .setCustomId('f_cargo').setLabel('CARGO').setPlaceholder('Digite o número do seu cargo 1 2 ou 3').setStyle(TextInputStyle.Short).setMaxLength(1).setRequired(true);
-
-            modal.addComponents(new ActionRowBuilder().addComponents(nIn), new ActionRowBuilder().addComponents(cIn));
+        // ABRIR MODAL
+        if (interaction.isButton() && interaction.customId === 'reg_btn') {
+            const modal = new ModalBuilder().setCustomId('modal_form').setTitle('Registro de Membro');
+            const n = new TextInputBuilder().setCustomId('n').setLabel('NICK').setPlaceholder('Nome do seu personagem na cidade').setStyle(TextInputStyle.Short).setRequired(true);
+            const c = new TextInputBuilder().setCustomId('c').setLabel('CARGO').setPlaceholder('Digite o número do seu cargo 1 2 ou 3').setStyle(TextInputStyle.Short).setMaxLength(1).setRequired(true);
+            modal.addComponents(new ActionRowBuilder().addComponents(n), new ActionRowBuilder().addComponents(c));
             return await interaction.showModal(modal);
         }
 
-        // --- 3. PROCESSAMENTO E RELATÓRIOS ---
-        if (interaction.isModalSubmit() && interaction.customId === 'md_reg') {
+        // PROCESSAR FORMULÁRIO
+        if (interaction.isModalSubmit() && interaction.customId === 'modal_form') {
+            // DEFER IMEDIATO PARA NÃO TRAVAR
             await interaction.deferReply({ ephemeral: true });
+            console.log("📥 Formulário recebido, processando...");
 
-            const nick = interaction.fields.getTextInputValue('f_nick');
-            const cargo = interaction.fields.getTextInputValue('f_cargo');
+            const nick = interaction.fields.getTextInputValue('n');
+            const cargoNum = interaction.fields.getTextInputValue('c');
 
-            if (!['1', '2', '3'].includes(cargo)) return interaction.editReply("❌ Cargo inválido!");
+            if (!['1', '2', '3'].includes(cargoNum)) return interaction.editReply("❌ Use apenas 1, 2 ou 3 no cargo.");
 
-            // Embed de Status para o Jogador (aparece no canal onde ele enviou)
-            const statusEmbed = new EmbedBuilder()
-                .setTitle('⏳ REGISTRO EM ANÁLISE')
-                .setColor('Yellow')
-                .setDescription(`Olá **${interaction.user.username}**, seu registro foi enviado!\n\n**Nick:** ${nick}\n**Cargo:** ${CONFIG.CARGOS[cargo].nome}\n\nAguarde um administrador avaliar.`)
-                .setTimestamp();
+            // 1. TENTA ENVIAR PARA A STAFF PRIMEIRO (Para garantir que o relatório chegue)
+            const canalStaff = client.channels.cache.get(CONFIG.CANAL_LOGS_STAFF);
+            if (!canalStaff) {
+                console.log("❌ ERRO: Canal de Staff não encontrado!");
+                return interaction.editReply("❌ Erro: O canal de relatórios não foi encontrado pelo Bot.");
+            }
 
-            const msgStatus = await interaction.channel.send({ content: `<@${interaction.user.id}>`, embeds: [statusEmbed] });
-
-            // Salva no Banco
-            const reg = await Registro.findOneAndUpdate(
-                { userId: interaction.user.id },
-                { nick, cargoNum: cargo, status: 'PENDENTE', mensagemStatusId: msgStatus.id },
-                { upsert: true, new: true }
-            );
-
-            // Embed para a Staff (Canal de Logs)
             const staffEmbed = new EmbedBuilder()
-                .setAuthor({ name: interaction.user.username, iconURL: interaction.user.displayAvatarURL() })
-                .setTitle('📥 NOVO REGISTRO')
-                .setColor('Blue')
+                .setTitle('📥 STATUS: PENDENTE')
+                .setColor('Yellow')
                 .addFields(
                     { name: 'NICK', value: nick, inline: true },
-                    { name: 'Cargo', value: CONFIG.CARGOS[cargo].nome, inline: true },
-                    { name: 'Usuário | ID', value: `${interaction.user.username} | ${interaction.user.id}`, inline: false },
-                    { name: 'Data e hora', value: new Date().toLocaleString('pt-BR'), inline: false }
+                    { name: 'Cargo', value: CONFIG.CARGOS[cargoNum].nome, inline: true },
+                    { name: 'Usuário', value: `<@${interaction.user.id}>`, inline: false }
                 )
-                .setFooter({ text: 'Sistema Horizonte Roleplay' });
+                .setTimestamp();
 
             const rowStaff = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`apr_${interaction.user.id}`).setLabel('Aceitar').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`rec_${interaction.user.id}`).setLabel('Recusar').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`edt_${interaction.user.id}`).setLabel('Editar').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder().setCustomId(`rec_${interaction.user.id}`).setLabel('Recusar').setStyle(ButtonStyle.Danger)
             );
 
-            const canalStaff = client.channels.cache.get(CONFIG.CANAL_LOGS_STAFF);
-            const msgStaff = await canalStaff.send({ embeds: [staffEmbed], components: [rowStaff] });
-            
-            reg.mensagemPainelId = msgStaff.id;
-            await reg.save();
+            await canalStaff.send({ embeds: [staffEmbed], components: [rowStaff] });
+            console.log("✅ Relatório enviado para o canal da Staff!");
 
-            await interaction.editReply("✅ Seu formulário foi enviado com sucesso!");
+            // 2. SALVA NO BANCO EM SEGUNDO PLANO
+            await Registro.findOneAndUpdate(
+                { userId: interaction.user.id },
+                { nick, cargoNum, status: 'PENDENTE' },
+                { upsert: true }
+            ).catch(e => console.log("Erro ao salvar no banco:", e));
+
+            // 3. RESPONDE AO USUÁRIO
+            await interaction.editReply("✅ Seu formulário foi enviado!");
         }
 
-        // --- 4. LÓGICA DE ACEITAR / RECUSAR (ATUALIZA AMBOS OS RELATÓRIOS) ---
+        // LÓGICA DE ACEITAR/RECUSAR
         if (interaction.isButton() && (interaction.customId.startsWith('apr_') || interaction.customId.startsWith('rec_'))) {
+            await interaction.deferUpdate();
             const [acao, targetId] = interaction.customId.split('_');
-            const reg = await Registro.findOne({ userId: targetId });
-            const targetMember = await interaction.guild.members.fetch(targetId);
-            const canalUsuario = client.channels.cache.get(interaction.channelId); // Canal onde o status do jogador está
+            const embedOriginal = interaction.message.embeds[0];
+            const novoEmbed = EmbedBuilder.from(embedOriginal);
 
             if (acao === 'apr') {
-                const info = CONFIG.CARGOS[reg.cargoNum];
-                await targetMember.roles.add(info.id);
-                await targetMember.setNickname(`『Ⓗ¹』${reg.nick}`).catch(() => null);
-
-                // Atualiza Mensagem da Staff
-                await interaction.update({ content: `✅ Registro aprovado por ${interaction.user.tag}`, embeds: [], components: [] });
-
-                // Atualiza Mensagem de Status do Jogador
-                const msgUser = await interaction.channel.messages.fetch(reg.mensagemStatusId).catch(() => null);
-                if (msgUser) {
-                    const aprEmbed = new EmbedBuilder().setTitle('✅ REGISTRO APROVADO').setColor('Green').setDescription(`Seu registro foi aceito! Bem-vindo ao setor **${info.nome}**.`);
-                    await msgUser.edit({ embeds: [aprEmbed] });
-                }
-            }
-
-            if (acao === 'rec') {
-                await interaction.update({ content: `❌ Registro recusado por ${interaction.user.tag}`, embeds: [], components: [] });
-                const msgUser = await interaction.channel.messages.fetch(reg.mensagemStatusId).catch(() => null);
-                if (msgUser) {
-                    const recEmbed = new EmbedBuilder().setTitle('❌ REGISTRO RECUSADO').setColor('Red').setDescription(`Seu registro foi recusado pela administração.`);
-                    await msgUser.edit({ embeds: [recEmbed] });
-                }
+                novoEmbed.setTitle('✅ STATUS: ACEITO').setColor('Green');
+                await interaction.editReply({ embeds: [novoEmbed], components: [] });
+            } else {
+                novoEmbed.setTitle('❌ STATUS: RECUSADO').setColor('Red');
+                await interaction.editReply({ embeds: [novoEmbed], components: [] });
             }
         }
 
-    } catch (e) { console.error(e); }
+    } catch (error) {
+        console.error("❌ ERRO GERAL:", error);
+    }
 });
 
 client.login(process.env.TOKEN);
