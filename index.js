@@ -1,5 +1,5 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField } = require('discord.js');
-const mongoose = require('mongoose'); // Mantendo Mongoose mas com lógica de resposta rápida
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const mongoose = require('mongoose');
 const Registro = require('./models/Registro');
 require('dotenv').config();
 
@@ -8,115 +8,141 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.GuildMember]
 });
 
-// CONFIGURAÇÃO DE CARGOS E CANAIS
+// --- CONFIGURAÇÃO DE IDS DO SERVIDOR ---
 const CONFIG = {
     GUILD_ID: "1472997422786674842",
     CANAL_LOGS_STAFF: "1472997423789113409",
     CARGOS: {
-        "1": { id: "1472997422786674844", nome: "Ajudante", setor: "Suporte", nivel: 1 },
-        "2": { id: "1472997422786674845", nome: "Moderador(a)", setor: "Segurança", nivel: 2 },
-        "3": { id: "1472997422786674846", nome: "Administrador(a)", setor: "Segurança", nivel: 3 },
-        "4": { id: "1472997422786674847", nome: "Auxiliar", setor: "Superior", nivel: 4 },
-        "5": { id: "1472997422786674848", nome: "Coordenador(a)", setor: "Superior", nivel: 5 },
-        "6": { id: "1472997422786674848", nome: "Direção", setor: "Superior", nivel: 6 }
+        "1": { id: "1472997422786674844", nome: "Ajudante", setor: "Suporte" },
+        "2": { id: "1472997422786674845", nome: "Moderador(a)", setor: "Segurança" },
+        "3": { id: "1472997422786674846", nome: "Administrador(a)", setor: "Segurança" }
     }
 };
 
-mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ Banco conectado")).catch(e => console.log(e));
+mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ Banco Conectado")).catch(e => console.log(e));
 
-client.on('ready', () => {
-    console.log(`🚀 ${client.user.tag} ONLINE`);
-    client.guilds.cache.get(CONFIG.GUILD_ID)?.commands.set([{ name: 'painel', description: 'Envia o painel de registro' }]);
+client.on('ready', async () => {
+    console.log(`🤖 Bot ${client.user.tag} Online!`);
+    const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
+    if (guild) {
+        await guild.commands.set([{ name: 'painel', description: 'Envia o painel de registro' }]);
+    }
 });
 
 client.on('interactionCreate', async (interaction) => {
     try {
-        // --- COMANDO PAINEL ---
-        if (interaction.commandName === 'painel') {
-            const embed = new EmbedBuilder()
-                .setColor(0x5865F2).setTitle('📋 SISTEMA DE REGISTRO').setDescription('Bem-vindo ao sistema de registro do servidor!\n\nSelecione e utilize apenas o cargo correspondente ao seu setor atual.');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('iniciar_registro').setLabel('Registrar-se').setEmoji('📋').setStyle(ButtonStyle.Primary));
-            return await interaction.reply({ embeds: [embed], components: [row] });
+        // --- PAINEL PRINCIPAL (IGUALZINHO À FOTO) ---
+        if (interaction.isChatInputCommand() && interaction.commandName === 'painel') {
+            const registroEmbed = new EmbedBuilder()
+                .setColor(0x5865F2)
+                .setTitle('📋 SISTEMA DE REGISTRO')
+                .setDescription(
+                    'Bem-vindo ao sistema de registro do servidor!\n\n' +
+                    'Para que tudo funcione corretamente, **selecione e utilize apenas o cargo correspondente ao seu setor atual.**\n\n' +
+                    '⚠️ **Usar cargo incorreto pode causar:**\n' +
+                    '• Erros no registro\n' +
+                    '• Problemas de permissão\n' +
+                    '• Penalidades administrativas\n\n' +
+                    '✅ Em caso de dúvida, procure um responsável do seu setor.'
+                );
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('iniciar_registro')
+                    .setLabel('Registrar-se')
+                    .setEmoji('📋')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            return await interaction.reply({ embeds: [registroEmbed], components: [row] });
         }
 
-        // --- ABRIR FORMULÁRIO ---
+        // --- ABRIR MODAL ---
         if (interaction.isButton() && interaction.customId === 'iniciar_registro') {
-            const modal = new ModalBuilder().setCustomId('modal_registro_membro').setTitle('Registro de Membro');
-            const nickIn = new TextInputBuilder().setCustomId('nick_input').setLabel("NICK").setPlaceholder('Nome do seu personagem na cidade').setStyle(TextInputStyle.Short).setRequired(true);
-            const cargoIn = new TextInputBuilder().setCustomId('cargo_input').setLabel("CARGO (1 a 3)").setPlaceholder('digite o número do seu cargo: 1, 2 ou 3').setStyle(TextInputStyle.Short).setMaxLength(1).setRequired(true);
+            const modal = new ModalBuilder().setCustomId('modal_reg').setTitle('Registro de Membro');
+
+            const nickIn = new TextInputBuilder()
+                .setCustomId('nick_input').setLabel("NICK").setPlaceholder('Nome do seu personagem na cidade').setStyle(TextInputStyle.Short).setRequired(true);
+
+            const cargoIn = new TextInputBuilder()
+                .setCustomId('cargo_input').setLabel("CARGO (1 a 3)").setPlaceholder('digite o número do seu cargo: 1, 2 ou 3').setStyle(TextInputStyle.Short).setMaxLength(1).setRequired(true);
+
             modal.addComponents(new ActionRowBuilder().addComponents(nickIn), new ActionRowBuilder().addComponents(cargoIn));
             return await interaction.showModal(modal);
         }
 
-        // --- RECEBER FORMULÁRIO ---
-        if (interaction.isModalSubmit() && interaction.customId === 'modal_registro_membro') {
+        // --- RECEBER FORMULÁRIO E ENVIAR RELATÓRIO COM FOTO ---
+        if (interaction.isModalSubmit() && interaction.customId === 'modal_reg') {
             await interaction.deferReply({ ephemeral: true });
+
             const nick = interaction.fields.getTextInputValue('nick_input');
             const cargo = interaction.fields.getTextInputValue('cargo_input');
 
             if (!['1', '2', '3'].includes(cargo)) return interaction.editReply("❌ Cargo inválido! Use 1, 2 ou 3.");
 
-            // RELATÓRIO PENDENTE PARA STAFF
             const canalStaff = client.channels.cache.get(CONFIG.CANAL_LOGS_STAFF);
+            
+            // RELATÓRIO COM FOTO DO USUÁRIO
             const staffEmbed = new EmbedBuilder()
                 .setAuthor({ name: interaction.user.username, iconURL: interaction.user.displayAvatarURL() })
+                .setThumbnail(interaction.user.displayAvatarURL()) // Foto do jogador no canto
                 .setTitle('📥 NOVO REGISTRO')
+                .setColor('Blue')
                 .addFields(
                     { name: 'NICK', value: nick, inline: true },
                     { name: 'Cargo', value: CONFIG.CARGOS[cargo].nome, inline: true },
-                    { name: 'Usuário ID', value: `${interaction.user.username} | ${interaction.user.id}` },
-                    { name: 'Data e hora', value: new Date().toLocaleString('pt-BR') }
+                    { name: 'Usuário | ID', value: `${interaction.user.username} | ${interaction.user.id}`, inline: false },
+                    { name: 'Data e hora', value: new Date().toLocaleString('pt-BR'), inline: false }
                 )
-                .setColor('Blue').setFooter({ text: 'Sistema Horizonte Roleplay' });
+                .setFooter({ text: 'Sistema desenvolvido pela equipe administrativa do Horizonte Roleplay.' });
 
-            const btns = new ActionRowBuilder().addComponents(
+            const rowStaff = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`aceitar_${interaction.user.id}`).setLabel('Aceitar').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`recusar_${interaction.user.id}`).setLabel('Recusar').setStyle(ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId(`editar_${interaction.user.id}`).setLabel('Editar').setStyle(ButtonStyle.Primary)
             );
 
-            await canalStaff.send({ embeds: [staffEmbed], components: [btns] });
-            
-            // Salva em background para não travar
-            Registro.findOneAndUpdate({ userId: interaction.user.id }, { nick, cargoNum: cargo, status: 'PENDENTE' }, { upsert: true }).catch(e => console.log(e));
+            await canalStaff.send({ embeds: [staffEmbed], components: [rowStaff] });
+
+            // Salva no banco
+            await Registro.findOneAndUpdate(
+                { userId: interaction.user.id },
+                { nick, cargoNum: cargo, status: 'PENDENTE' },
+                { upsert: true }
+            );
 
             await interaction.editReply("✅ Seu formulário foi enviado com sucesso!");
         }
 
-        // --- BOTÃO ACEITAR ---
-        if (interaction.isButton() && interaction.customId.startsWith('aceitar_')) {
-            const targetId = interaction.customId.split('_')[1];
-            if (interaction.user.id === targetId) return interaction.reply({ content: "❌ Você não pode aceitar seu próprio registro!", ephemeral: true });
+        // --- LÓGICA DOS BOTÕES DA STAFF (CORREÇÃO DE FUNCIONAMENTO) ---
+        if (interaction.isButton() && (interaction.customId.startsWith('aceitar_') || interaction.customId.startsWith('recusar_'))) {
+            const [acao, targetId] = interaction.customId.split('_');
+            
+            // Impede auto-aprovação
+            if (interaction.user.id === targetId) {
+                return interaction.reply({ content: "❌ Você não pode avaliar seu próprio registro!", ephemeral: true });
+            }
 
             const reg = await Registro.findOne({ userId: targetId });
-            const member = await interaction.guild.members.fetch(targetId);
-            const info = CONFIG.CARGOS[reg.cargoNum];
+            const member = await interaction.guild.members.fetch(targetId).catch(() => null);
 
-            // Trava de Nível
-            const staffMember = interaction.member;
-            // Lógica de segurança aqui...
+            if (!member) return interaction.reply({ content: "❌ Usuário não encontrado no servidor.", ephemeral: true });
 
-            await member.roles.add(info.id);
-            await member.setNickname(`『Ⓗ¹』${reg.nick}`).catch(() => null);
+            if (acao === 'aceitar') {
+                const info = CONFIG.CARGOS[reg.cargoNum];
+                await member.roles.add(info.id);
+                await member.setNickname(`『Ⓗ¹』${reg.nick}`).catch(() => null);
 
-            // Embed de Aprovação (Suporte vs Segurança)
-            const aprEmbed = new EmbedBuilder()
-                .setColor('#2ecc71')
-                .setTitle('✅ REGISTRO APROVADO — HORIZONTE ROLEPLAY')
-                .setDescription(`**Prezado(a) ${reg.nick},**\n\nInformamos que seu registro foi analisado e aprovado!`)
-                .addFields(
-                    { name: '👤 Nome', value: `『Ⓗ¹』${reg.nick}`, inline: true },
-                    { name: '📘 Cargo Assumido', value: info.nome, inline: true },
-                    { name: '🛡️ Responsável', value: interaction.user.username, inline: true }
-                ).setTimestamp();
+                await interaction.update({ content: `✅ **Registro aprovado por ${interaction.user.username}**`, embeds: [], components: [] });
+                // Aqui você pode adicionar o envio daquelas mensagens de aprovação que você mandou antes
+            }
 
-            await member.send({ embeds: [aprEmbed] }).catch(() => null);
-            await interaction.update({ content: `✅ Aprovado por ${interaction.user.username}`, embeds: [], components: [] });
+            if (acao === 'recusar') {
+                await interaction.update({ content: `❌ **Registro recusado por ${interaction.user.username}**`, embeds: [], components: [] });
+            }
         }
 
-    } catch (e) {
-        console.error(e);
-    }
+    } catch (e) { console.error(e); }
 });
 
 client.login(process.env.TOKEN);
