@@ -1,58 +1,39 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require("discord.js");
-const Registro = require("../models/Registro");
+const {
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
+} = require("discord.js");
 
 module.exports = client => {
   client.on("interactionCreate", async i => {
 
-    if (i.isButton() && i.customId === "iniciar_registro") {
-      const modal = new ModalBuilder()
-        .setCustomId("modal_registro")
-        .setTitle("Registro");
+    if (!i.isButton()) return;
+    if (i.customId !== "abrir_registro") return;
 
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId("nick")
-            .setLabel("Nick")
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId("cargo")
-            .setLabel("Cargo (1,2,3)")
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        )
-      );
+    const modal = new ModalBuilder()
+      .setCustomId("modal_registro")
+      .setTitle("Sistema de Registro");
 
-      return i.showModal(modal);
-    }
+    const nick = new TextInputBuilder()
+      .setCustomId("nick")
+      .setLabel("Nome do personagem")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("Digite o nome do seu personagem na cidade")
+      .setRequired(true);
 
-    if (i.isModalSubmit() && i.customId === "modal_registro") {
-      await i.deferReply({ ephemeral: true });
+    const cargo = new TextInputBuilder()
+      .setCustomId("cargo")
+      .setLabel("Cargo")
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder("Digite o número do seu cargo: 1, 2 ou 3")
+      .setRequired(true);
 
-      const nick = i.fields.getTextInputValue("nick");
-      const cargo = i.fields.getTextInputValue("cargo");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(nick),
+      new ActionRowBuilder().addComponents(cargo)
+    );
 
-      if (!["1","2","3"].includes(cargo)) {
-        return i.editReply("Cargo inválido.");
-      }
-
-      await Registro.findOneAndUpdate(
-        { userId: i.user.id },
-        {
-          userId: i.user.id,
-          username: i.user.username,
-          nick,
-          cargo: Number(cargo),
-          setor: cargo == 1 ? "SUPORTE" : "SEGURANÇA",
-          status: "PENDENTE"
-        },
-        { upsert: true }
-      );
-
-      i.editReply("Registro enviado para análise.");
-    }
+    await i.showModal(modal);
   });
 };
